@@ -1,0 +1,26 @@
+# Compiled executable
+password_manager
+
+# Data files (contain user credentials - should not be committed)
+data/
+
+# Build artifacts
+*.o
+*.out
+*.exe
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+

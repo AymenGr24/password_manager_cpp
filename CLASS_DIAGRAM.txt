@@ -1,0 +1,70 @@
+# Class Structure Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PasswordManager                           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Private Members:                                      │   │
+│  │ • vector<User> users                                 │   │
+│  │ • User* currentUser                                  │   │
+│  └─────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Public Methods:                                      │   │
+│  │ • run() - Main application loop                     │   │
+│  │ • login() - User authentication                     │   │
+│  │ • registerUser() - New user creation                 │   │
+│  │ • showUserMenu() - Normal user interface            │   │
+│  │ • showAdminMenu() - Admin interface                  │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                                │
+                                │ contains
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                         User                                │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Private Members:                                      │   │
+│  │ • string username                                    │   │
+│  │ • string password                                    │   │
+│  │ • string userType                                    │   │
+│  │ • vector<Credential> credentials                     │   │
+│  └─────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Public Methods:                                      │   │
+│  │ • addCredential() - Add new password entry          │   │
+│  │ • viewCredentials() - Display all passwords          │   │
+│  │ • searchCredentials() - Find specific password       │   │
+│  │ • sortByDate() - Sort by modification date          │   │
+│  │ • verifyPassword() - Check login credentials         │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                                │
+                                │ contains
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Credential                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Private Members:                                      │   │
+│  │ • string title                                       │   │
+│  │ • string username                                    │   │
+│  │ • string encryptedPassword                           │   │
+│  │ • string category                                    │   │
+│  │ • string url                                         │   │
+│  │ • string dateCreated                                 │   │
+│  │ • string lastUpdated                                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Public Methods:                                      │   │
+│  │ • getTitle(), getUsername(), etc. - Getters         │   │
+│  │ • getDecryptedPassword() - Decrypt password          │   │
+│  │ • updatePassword() - Change password                │   │
+│  │ • display() - Show credential info                   │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Relationships:
+- **PasswordManager** contains multiple **User** objects
+- **User** contains multiple **Credential** objects  
+- Each class encapsulates its own data and methods
+- Data flows: PasswordManager → User → Credential
