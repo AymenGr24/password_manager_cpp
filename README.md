@@ -36,7 +36,7 @@ A secure password manager application built with C++ using Object-Oriented Progr
 ## 🚀 Compilation
 
 ```bash
-g++ -o password_manager password_manager.cpp -std=c++14
+g++ -o password_manager password_manager.cpp -std=c++17
 ```
 
 ## 💻 Usage
@@ -55,24 +55,47 @@ g++ -o password_manager password_manager.cpp -std=c++14
 ```
 .
 ├── password_manager.cpp    # Main source code
+├── password_manager        # Compiled executable
 ├── README.md              # This file
-├── CLASS_DIAGRAM.txt      # Class structure diagram
-├── CODE_REVIEW.md         # Code review document
-├── COMPREHENSIVE_REVIEW.md # Comprehensive review
-├── EXPLANATION_GUIDE.md   # Explanation guide for presentation
+├── FINAL_REVIEW.md        # Comprehensive code review
 └── data/                  # Data directory (user credentials - not committed)
+    ├── users.dat          # User accounts data
+    └── credentials_*.dat  # Individual user credential files
 ```
 
 ## 🎯 Requirements
 
-- C++14 or higher
-- Standard C++ libraries (iostream, string, vector, fstream, etc.)
+- C++17 or higher
+- Standard C++ libraries (iostream, string, vector, fstream, filesystem, etc.)
 
 ## 📝 Notes
 
 - Data files are stored in the `data/` directory
-- Each user's credentials are stored in separate files
+- Each user's credentials are stored in separate files (`credentials_<username>.dat`)
 - The application automatically creates default users on first run
+- All data is automatically saved on logout or credential changes
+- See `FINAL_REVIEW.md` for detailed code review and requirement coverage
+
+## 🔍 Features in Detail
+
+### User Management
+- **Login System:** Secure authentication with password hashing
+- **User Roles:** Admin and normal user accounts with different permissions
+- **Registration:** New user creation with password strength validation
+- **Admin Features:** User management, system statistics, credential management
+
+### Credential Management
+- **Categories:** Website, Desktop Application, or Game
+- **CRUD Operations:** Full create, read, update, delete functionality
+- **Audit Trail:** Automatic tracking of creation and last update timestamps
+- **Search & Sort:** Search by name, sort by date or name
+- **Password Display:** Masked by default with option to reveal
+
+### Security
+- **Password Hashing:** User passwords hashed with salt (1000 rounds)
+- **Encryption:** Credential passwords encrypted using multi-round XOR encryption
+- **Input Validation:** Comprehensive validation for all user inputs
+- **Password Generation:** Secure random password generator with customizable options
 
 ## 👤 Author
 

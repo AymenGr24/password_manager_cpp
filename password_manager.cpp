@@ -1,3 +1,21 @@
+/*
+ * Password Manager - C++ Console Application
+ * 
+ * A secure password management system with multi-user support, encryption,
+ * and credential management for websites, desktop applications, and games.
+ * 
+ * Features:
+ * - Multi-user authentication (admin and normal users)
+ * - Secure password storage with encryption
+ * - Random password generation
+ * - Credential CRUD operations with audit trail
+ * - Search and sort functionality
+ * - Masked password display
+ * 
+ * Author: Aymen Griri
+ * Date: 2025
+ */
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -10,8 +28,11 @@
 #include <iomanip>
 #include <memory>
 #include <functional>
+#include <filesystem>
+#include <stdexcept>
 
 using namespace std;
+namespace fs = std::filesystem;
 
 // ============================================================================
 // CONSTANTS & CONFIGURATION
@@ -20,8 +41,9 @@ namespace Constants {
     const vector<string> VALID_CATEGORIES = {"Website", "Desktop", "Game"};
     const int MIN_PASSWORD_LENGTH = 8;
     const int MAX_PASSWORD_LENGTH = 50;
-    const string USERS_FILE = "data/users.dat";
-    const string CREDENTIALS_FILE_PREFIX = "data/credentials_";
+    const string DATA_DIR = "data";
+    const string USERS_FILE = DATA_DIR + "/users.dat";
+    const string CREDENTIALS_FILE_PREFIX = DATA_DIR + "/credentials_";
     const string MASTER_KEY = "PasswordManager2024SecureKey!@#";
     const int SALT_SIZE = 16;
 }
@@ -31,11 +53,12 @@ namespace Constants {
 // ============================================================================
 class Utilities {
 public:
+    // Encrypts plaintext using multi-round XOR encryption with obfuscation
     static string encrypt(const string &plaintext) {
         string result = plaintext;
         string key = Constants::MASTER_KEY;
         
-        // Simple but more secure than XOR - using multiple rounds with different keys
+        // Multi-round encryption for enhanced security
         for (size_t round = 0; round < 3; ++round) {
             for (size_t i = 0; i < result.length(); ++i) {
                 char keyChar = key[i % key.length()];
@@ -43,36 +66,33 @@ public:
             }
         }
         
-        // Add some obfuscation
+        // Obfuscate encrypted data
         string obfuscated;
-        for (char c : result) {
+        for (unsigned char c : result) {
             obfuscated += to_string((int)c + 100) + "|";
         }
-        
         return obfuscated;
     }
-    
+
+    // Decrypts ciphertext by reversing the encryption process
     static string decrypt(const string &ciphertext) {
-        // Remove obfuscation
         string result;
         istringstream iss(ciphertext);
         string token;
-        
         while (getline(iss, token, '|')) {
             if (!token.empty()) {
                 try {
                     int val = stoi(token) - 100;
                     result += (char)val;
-                } catch (const exception& e) {
-                    // If we can't parse, just continue
+                } catch (...) {
                     continue;
                 }
             }
         }
-        
+
         string key = Constants::MASTER_KEY;
-        
-        // Reverse the encryption rounds
+
+        // Reverse encryption rounds
         for (int round = 2; round >= 0; --round) {
             for (size_t i = 0; i < result.length(); ++i) {
                 char keyChar = key[i % key.length()];
@@ -83,174 +103,173 @@ public:
         return result;
     }
 
+    // Returns current system time as time_t
     static time_t getCurrentTimeT() {
-        return time(0);
+        return time(nullptr);
     }
 
+    // Validates if category is one of the allowed categories (Website, Desktop, Game)
     static bool isValidCategory(const string& category) {
-        return find(Constants::VALID_CATEGORIES.begin(), 
+        return find(Constants::VALID_CATEGORIES.begin(),
                    Constants::VALID_CATEGORIES.end(), category) != Constants::VALID_CATEGORIES.end();
     }
 
+    // Checks if password meets minimum length requirement
     static bool isStrongPassword(const string& password) {
-        return password.length() >= Constants::MIN_PASSWORD_LENGTH;
+        return static_cast<int>(password.length()) >= Constants::MIN_PASSWORD_LENGTH;
     }
 
+    // Converts string to lowercase for case-insensitive comparisons
     static string toLower(const string& str) {
         string lowerStr = str;
         transform(lowerStr.begin(), lowerStr.end(), lowerStr.begin(), ::tolower);
         return lowerStr;
     }
 
+    // Removes leading and trailing whitespace from string
     static string trim(const string& str) {
         size_t start = str.find_first_not_of(" \t\n\r");
         size_t end = str.find_last_not_of(" \t\n\r");
         return (start == string::npos) ? "" : str.substr(start, end - start + 1);
     }
-    
+
+    // Generates a random salt value for password hashing (hexadecimal format)
     static string generateSalt() {
         random_device rd;
         mt19937 gen(rd());
         uniform_int_distribution<> dis(0, 255);
-        
+
         string salt;
         for (int i = 0; i < Constants::SALT_SIZE; ++i) {
-            salt += (char)dis(gen);
+            salt += static_cast<char>(dis(gen));
         }
-        
-        // Convert to hex string
         ostringstream oss;
         for (unsigned char c : salt) {
             oss << hex << setw(2) << setfill('0') << (int)c;
         }
         return oss.str();
     }
-    
+
+    // Hashes password with salt using 1000 iterations for security
     static string hashPassword(const string& password, const string& salt) {
-        // Simple but more secure hashing with salt
         string combined = password + salt + Constants::MASTER_KEY;
-        
-        // Multiple rounds of hashing
         hash<string> hasher;
         size_t hashValue = hasher(combined);
-        
-        // Additional rounds for security
         for (int i = 0; i < 1000; ++i) {
             string temp = to_string(hashValue) + salt;
             hashValue = hasher(temp);
         }
-        
         return to_string(hashValue);
+    }
+
+    // Formats time_t to readable string (cross-platform compatible)
+    static string formatTime(time_t t) {
+        if (t <= 0) return "Unknown";
+        tm tmBuf;
+#if defined(_MSC_VER)
+        localtime_s(&tmBuf, &t);
+#else
+        tm *tmp = localtime(&t);
+        if (!tmp) return "Invalid time";
+        tmBuf = *tmp;
+#endif
+        char buffer[64];
+        if (strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tmBuf)) {
+            return string(buffer);
+        }
+        return "Invalid time";
     }
 };
 
 // ============================================================================
-// CLASS 1: Credential
+// CREDENTIAL CLASS
 // ============================================================================
 class Credential {
 private:
-    string id;
-    string title;
-    string username;
+    string name;
     string encryptedPassword;
     string category;
     time_t dateCreated;
     time_t lastUpdated;
 
 public:
-    Credential(string t, string u, string p, string c)
-        : title(Utilities::trim(t)), username(Utilities::trim(u)), 
-          category(Utilities::trim(c)) {
-        
+    // Constructor for new credential (encrypts password)
+    Credential(string n, string p, string c)
+        : name(Utilities::trim(n)), category(Utilities::trim(c)) {
+
+        if (name.empty()) {
+            throw invalid_argument("Name cannot be empty");
+        }
+
         if (!Utilities::isValidCategory(category)) {
             throw invalid_argument("Invalid category");
         }
 
         encryptedPassword = Utilities::encrypt(p);
         dateCreated = lastUpdated = Utilities::getCurrentTimeT();
-        generateId();
     }
 
-    // For loading from file
-    Credential(string i, string t, string u, string p, string c, time_t created, time_t updated)
-        : id(i), title(t), username(u), encryptedPassword(p), category(c), 
+    // Constructor for loading from file (password already encrypted)
+    Credential(string n, string encryptedP, string c, time_t created, time_t updated)
+        : name(n), encryptedPassword(encryptedP), category(c),
           dateCreated(created), lastUpdated(updated) {}
 
-private:
-    void generateId() {
-        random_device rd;
-        mt19937 gen(rd());
-        uniform_int_distribution<> dis(1000, 9999);
-        id = to_string(dis(gen)) + "_" + to_string(dateCreated);
-    }
-
-public:
-    // Getters
-    string getId() const { return id; }
-    string getTitle() const { return title; }
-    string getUsername() const { return username; }
+    // Getters for credential properties
+    string getName() const { return name; }
     string getCategory() const { return category; }
-    time_t getDateCreated() const { return dateCreated; }
     time_t getLastUpdated() const { return lastUpdated; }
-    
-    string getDecryptedPassword() const { 
+
+    // Decrypts and returns the password (used for display)
+    string getDecryptedPassword() const {
         try {
             return Utilities::decrypt(encryptedPassword);
-        } catch (const exception& e) {
+        } catch (...) {
             return "*** DECRYPTION ERROR ***";
         }
     }
 
     string getFormattedDateCreated() const {
-        char buffer[26];
-        ctime_r(&dateCreated, buffer);
-        return string(buffer);
+        return Utilities::formatTime(dateCreated);
     }
 
     string getFormattedLastUpdated() const {
-        char buffer[26];
-        ctime_r(&lastUpdated, buffer);
-        return string(buffer);
+        return Utilities::formatTime(lastUpdated);
     }
 
-    // Update methods
+    // Updates password and automatically updates lastUpdated timestamp
     void updatePassword(const string &newPass) {
-        // No length restriction for credential passwords - they can be any length
         encryptedPassword = Utilities::encrypt(newPass);
         lastUpdated = Utilities::getCurrentTimeT();
     }
 
-    void setTitle(const string &t) { 
-        title = Utilities::trim(t); 
-        lastUpdated = Utilities::getCurrentTimeT(); 
+    // Updates name and automatically updates lastUpdated timestamp
+    void setName(const string &n) {
+        if (Utilities::trim(n).empty()) {
+            throw invalid_argument("Name cannot be empty");
+        }
+        name = Utilities::trim(n);
+        lastUpdated = Utilities::getCurrentTimeT();
     }
 
-    void setUsername(const string &u) { 
-        username = Utilities::trim(u); 
-        lastUpdated = Utilities::getCurrentTimeT(); 
-    }
-
-    void setCategory(const string &c) { 
+    // Updates category and automatically updates lastUpdated timestamp
+    void setCategory(const string &c) {
         if (!Utilities::isValidCategory(c)) {
             throw invalid_argument("Invalid category");
         }
-        category = Utilities::trim(c); 
-        lastUpdated = Utilities::getCurrentTimeT(); 
+        category = Utilities::trim(c);
+        lastUpdated = Utilities::getCurrentTimeT();
     }
 
-    // Display
+    // Displays credential information (password masked by default)
     void display(bool showPassword = false) const {
         cout << "\n" << string(50, '=') << endl;
-        cout << title << endl;
+        cout << "Name: " << name << endl;
         cout << string(50, '=') << endl;
-        cout << " Username: " << username << endl;
         cout << " Password: ";
-        
         string decryptedPwd = getDecryptedPassword();
         if (showPassword) {
             cout << decryptedPwd << endl;
         } else {
-            // Show asterisks for password length, but handle decryption errors
             if (decryptedPwd.find("DECRYPTION ERROR") != string::npos) {
                 cout << "***" << endl;
             } else {
@@ -259,189 +278,58 @@ public:
         }
         cout << " Category: " << category;
         cout << "\n Created: " << getFormattedDateCreated();
-        cout << " Updated: " << getFormattedLastUpdated();
+        cout << " Updated: " << getFormattedLastUpdated() << endl;
     }
 
-    // Serialization for file storage
+    // Serializes credential data to string for file storage
     string serialize() const {
         ostringstream oss;
-        // Use ||| as field delimiter to avoid conflict with | in encrypted password
-        oss << id << "|||" << title << "|||" << username << "|||" 
-            << encryptedPassword << "|||" << category << "|||"
+        // Use ||| delimiter to avoid collision with | in encrypted password
+        oss << name << "|||" << encryptedPassword << "|||" << category << "|||"
             << dateCreated << "|||" << lastUpdated;
         return oss.str();
     }
 
+    // Deserializes credential data from string (with error handling)
     static Credential deserialize(const string& data) {
-        // Try new format first (using ||| as delimiter)
+        const string delimiter = "|||";
+        vector<string> parts;
         size_t pos = 0;
-        vector<string> tokens;
-        string delimiter = "|||";
-        
-        // Check if this is the new format (has ||| delimiter)
-        if (data.find(delimiter) != string::npos) {
-            // New format: id|||title|||username|||encryptedPassword|||category|||dateCreated|||lastUpdated
-            while (pos < data.length()) {
-                size_t found = data.find(delimiter, pos);
-                if (found == string::npos) {
-                    tokens.push_back(data.substr(pos));
-                    break;
-                }
-                tokens.push_back(data.substr(pos, found - pos));
-                pos = found + delimiter.length();
-            }
-            
-            if (tokens.size() >= 7) {
-                string id = tokens[0];
-                string title = tokens[1];
-                string username = tokens[2];
-                string encryptedPassword = tokens[3];
-                string category = tokens[4];
-                time_t created = stol(tokens[5]);
-                time_t updated = stol(tokens[6]);
-                return Credential(id, title, username, encryptedPassword, category, created, updated);
-            }
-        }
-        
-        // Old format: use | as delimiter (backward compatibility)
-        // The encrypted password contains | characters, so we need to reconstruct it
-        istringstream iss(data);
-        tokens.clear();
-        string token;
-        
-        // Read all tokens
-        while (getline(iss, token, '|')) {
-            tokens.push_back(token);
-        }
-        
-        if (tokens.size() < 4) {
-            throw runtime_error("Invalid credential data format: insufficient tokens");
-        }
-        
-        string id = tokens[0];
-        string title = tokens[1];
-        string username = tokens[2];
-        string encryptedPassword = tokens[3];
-        string category = "Website"; // default
-        time_t created = Utilities::getCurrentTimeT();
-        time_t updated = Utilities::getCurrentTimeT();
-        
-        // Find category by looking for valid category names
-        size_t categoryIdx = tokens.size();
-        for (size_t i = 4; i < tokens.size(); i++) {
-            if (find(Constants::VALID_CATEGORIES.begin(), Constants::VALID_CATEGORIES.end(), tokens[i]) != Constants::VALID_CATEGORIES.end()) {
-                categoryIdx = i;
-                category = tokens[i];
+        while (pos < data.size()) {
+            size_t found = data.find(delimiter, pos);
+            if (found == string::npos) {
+                parts.push_back(data.substr(pos));
                 break;
-            }
-        }
-        
-        // Reconstruct encrypted password: join tokens from index 3 to categoryIdx-1
-        // If category not found, try to find it before timestamps
-        if (categoryIdx < tokens.size()) {
-            // Reconstruct password from tokens[3] to tokens[categoryIdx-1]
-            encryptedPassword = tokens[3];
-            for (size_t i = 4; i < categoryIdx; i++) {
-                encryptedPassword += "|" + tokens[i];
-            }
-            
-            // Check for timestamps after category
-            // Format: category|created|updated or category|url|created|updated (old format with URL)
-            if (categoryIdx + 2 < tokens.size()) {
-                // Check if we have URL field (old format) - next token might be URL or timestamp
-                // Try to parse as timestamp first
-                try {
-                    time_t testCreated = stol(tokens[categoryIdx + 1]);
-                    time_t testUpdated = stol(tokens[categoryIdx + 2]);
-                    if (testCreated > 1000000000 && testUpdated > 1000000000) {
-                        // These are timestamps, no URL field
-                        created = testCreated;
-                        updated = testUpdated;
-                    } else if (categoryIdx + 3 < tokens.size()) {
-                        // Might have URL field (old format)
-                        created = stol(tokens[categoryIdx + 2]);
-                        updated = stol(tokens[categoryIdx + 3]);
-                    }
-                } catch (...) {
-                    // Not timestamps, try with URL field (old format)
-                    if (categoryIdx + 3 < tokens.size()) {
-                        try {
-                            created = stol(tokens[categoryIdx + 2]);
-                            updated = stol(tokens[categoryIdx + 3]);
-                        } catch (...) {
-                            // Use defaults
-                        }
-                    }
-                }
-            } else if (categoryIdx + 1 < tokens.size()) {
-                // Only one token after category, might be timestamp or URL (unlikely)
-                try {
-                    created = stol(tokens[categoryIdx + 1]);
-                    updated = created;
-                } catch (...) {
-                    // Use defaults
-                }
-            }
-        } else {
-            // Category not found, try to reconstruct password by checking for timestamps at the end
-            // Old format: id|title|username|pwd_part1|pwd_part2|...|pwd_partN|category|created|updated
-            // or with URL: id|title|username|pwd_part1|pwd_part2|...|pwd_partN|category|url|created|updated
-            
-            // Try to find timestamps (last 2 tokens should be numeric and large)
-            if (tokens.size() >= 6) {
-                try {
-                    time_t testUpdated = stol(tokens[tokens.size() - 1]);
-                    time_t testCreated = stol(tokens[tokens.size() - 2]);
-                    
-                    // If these look like timestamps (reasonable values), use them
-                    if (testCreated > 1000000000 && testUpdated > 1000000000) {
-                        updated = testUpdated;
-                        created = testCreated;
-                        
-                        // Check if token before timestamps is a valid category
-                        if (tokens.size() >= 7) {
-                            string possibleCategory = tokens[tokens.size() - 3];
-                            if (find(Constants::VALID_CATEGORIES.begin(), Constants::VALID_CATEGORIES.end(), possibleCategory) != Constants::VALID_CATEGORIES.end()) {
-                                category = possibleCategory;
-                                categoryIdx = tokens.size() - 3;
-                            } else if (tokens.size() >= 8) {
-                                // Might have URL field (old format), check token before that
-                                string possibleCategory2 = tokens[tokens.size() - 4];
-                                if (find(Constants::VALID_CATEGORIES.begin(), Constants::VALID_CATEGORIES.end(), possibleCategory2) != Constants::VALID_CATEGORIES.end()) {
-                                    category = possibleCategory2;
-                                    categoryIdx = tokens.size() - 4;
-                                }
-                            }
-                        }
-                        
-                        // Reconstruct password up to category
-                        encryptedPassword = tokens[3];
-                        for (size_t i = 4; i < categoryIdx; i++) {
-                            encryptedPassword += "|" + tokens[i];
-                        }
-                    }
-                } catch (...) {
-                    // Timestamps not found, reconstruct all tokens from 3 to end as password
-                    encryptedPassword = tokens[3];
-                    for (size_t i = 4; i < tokens.size(); i++) {
-                        encryptedPassword += "|" + tokens[i];
-                    }
-                }
             } else {
-                // Very short format, reconstruct password from remaining tokens
-                encryptedPassword = tokens[3];
-                for (size_t i = 4; i < tokens.size(); i++) {
-                    encryptedPassword += "|" + tokens[i];
-                }
+                parts.push_back(data.substr(pos, found - pos));
+                pos = found + delimiter.size();
             }
         }
-        
-        return Credential(id, title, username, encryptedPassword, category, created, updated);
+
+        if (parts.size() >= 5) {
+            try {
+                string name = parts[0];
+                string encryptedPassword = parts[1];
+                string category = parts[2];
+                time_t created = static_cast<time_t>(stol(parts[3]));
+                time_t updated = static_cast<time_t>(stol(parts[4]));
+                return Credential(name, encryptedPassword, category, created, updated);
+            } catch (...) {
+                // Fallback: create credential with default values if parsing fails
+                string name = parts.size() > 0 ? parts[0] : "Unnamed";
+                string encryptedPassword = parts.size() > 1 ? parts[1] : Utilities::encrypt("");
+                string category = (parts.size() > 2 && Utilities::isValidCategory(parts[2])) ? parts[2] : "Website";
+                time_t now = Utilities::getCurrentTimeT();
+                return Credential(name, encryptedPassword, category, now, now);
+            }
+        }
+
+        throw runtime_error("Invalid credential data format");
     }
 };
 
 // ============================================================================
-// CLASS 2: PasswordGenerator
+// PASSWORD GENERATOR CLASS
 // ============================================================================
 class PasswordGenerator {
 private:
@@ -451,15 +339,19 @@ private:
 public:
     PasswordGenerator() : generator(rd()) {}
 
-    string generate(int length = 16, bool useUpper = true, bool useLower = true, 
-                   bool useNumbers = true, bool useSpecial = true) {
-        
+    // Generates random password with configurable length and character sets
+    // Parameters allow customization of character types (uppercase, lowercase, numbers, special)
+    string generate(int length = 16, bool useUpper = true, bool useLower = true,
+                    bool useNumbers = true, bool useSpecial = true) {
+
+        // Validate password length constraints
         if (length < Constants::MIN_PASSWORD_LENGTH || length > Constants::MAX_PASSWORD_LENGTH) {
-            throw invalid_argument("Password length must be between " + 
-                                 to_string(Constants::MIN_PASSWORD_LENGTH) + " and " + 
-                                 to_string(Constants::MAX_PASSWORD_LENGTH));
+            throw invalid_argument("Password length must be between " +
+                                   to_string(Constants::MIN_PASSWORD_LENGTH) + " and " +
+                                   to_string(Constants::MAX_PASSWORD_LENGTH));
         }
 
+        // Build character set based on selected options
         string charSet;
         if (useUpper) charSet += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         if (useLower) charSet += "abcdefghijklmnopqrstuvwxyz";
@@ -470,9 +362,10 @@ public:
             throw invalid_argument("At least one character type must be selected");
         }
 
+        // Generate random password from character set
         uniform_int_distribution<size_t> dist(0, charSet.size() - 1);
         string password;
-        
+
         for (int i = 0; i < length; i++) {
             password += charSet[dist(generator)];
         }
@@ -482,7 +375,7 @@ public:
 };
 
 // ============================================================================
-// CLASS 3: User
+// USER CLASS
 // ============================================================================
 class User {
 private:
@@ -493,18 +386,21 @@ private:
     vector<Credential> credentials;
 
 public:
+    User() = default;
+
+    // Constructor for new user (hashes password with salt)
     User(string u, string p, string type)
         : username(Utilities::trim(u)), userType(type) {
-        
+
         if (username.empty() || p.empty()) {
             throw invalid_argument("Username and password cannot be empty");
         }
-        
+
         salt = Utilities::generateSalt();
         hashedPassword = Utilities::hashPassword(p, salt);
     }
 
-    // For loading from file
+    // Constructor for loading user from file
     User(string u, string hp, string s, string type, const vector<Credential>& creds)
         : username(u), hashedPassword(hp), salt(s), userType(type), credentials(creds) {}
 
@@ -512,20 +408,23 @@ public:
     string getUserType() const { return userType; }
     const vector<Credential>& getCredentials() const { return credentials; }
 
+    // Setters for user properties
     void setUsername(const string &u) { username = Utilities::trim(u); }
     void setUserType(const string &type) { userType = type; }
 
+    // Verifies if input password matches stored hash
     bool verifyPassword(const string &input) const {
         return hashedPassword == Utilities::hashPassword(input, salt);
     }
 
+    // Allows user to change their own password (requires old password verification)
     void changePassword(const string& oldPassword, const string& newPassword) {
         if (!verifyPassword(oldPassword)) {
             throw invalid_argument("Current password is incorrect");
         }
         if (!Utilities::isStrongPassword(newPassword)) {
-            throw invalid_argument("New password must be at least " + 
-                                 to_string(Constants::MIN_PASSWORD_LENGTH) + " characters long");
+            throw invalid_argument("New password must be at least " +
+                                   to_string(Constants::MIN_PASSWORD_LENGTH) + " characters long");
         }
         salt = Utilities::generateSalt();
         hashedPassword = Utilities::hashPassword(newPassword, salt);
@@ -533,23 +432,25 @@ public:
 
     void resetPasswordByAdmin(const string& newPassword) {
         if (!Utilities::isStrongPassword(newPassword)) {
-            throw invalid_argument("Password must be at least " + 
-                                 to_string(Constants::MIN_PASSWORD_LENGTH) + " characters long");
+            throw invalid_argument("Password must be at least " +
+                                   to_string(Constants::MIN_PASSWORD_LENGTH) + " characters long");
         }
         salt = Utilities::generateSalt();
         hashedPassword = Utilities::hashPassword(newPassword, salt);
     }
 
+    // Adds a new credential (prevents duplicates by name and category)
     void addCredential(const Credential& cred) {
-        // Check for duplicate titles
         for (const auto& existing : credentials) {
-            if (Utilities::toLower(existing.getTitle()) == Utilities::toLower(cred.getTitle())) {
-                throw invalid_argument("A credential with this title already exists");
+            if (Utilities::toLower(existing.getName()) == Utilities::toLower(cred.getName()) &&
+                existing.getCategory() == cred.getCategory()) {
+                throw invalid_argument("A credential with this name and category already exists");
             }
         }
         credentials.push_back(cred);
     }
 
+    // Displays all credentials (with optional password reveal)
     void viewCredentials(bool showPasswords = false) const {
         if (credentials.empty()) {
             cout << "\nNo credentials found.\n";
@@ -559,63 +460,21 @@ public:
         cout << "\n" << string(60, '=') << endl;
         cout << "YOUR CREDENTIALS (" << credentials.size() << " found)" << endl;
         cout << string(60, '=') << endl;
-        
-        int displayedCount = 0;
+
         for (size_t i = 0; i < credentials.size(); i++) {
             try {
                 cout << "\n[" << (i + 1) << " of " << credentials.size() << "]";
                 credentials[i].display(showPasswords);
-                displayedCount++;
-                
-                // Add separator between credentials (except for the last one)
                 if (i < credentials.size() - 1) {
                     cout << "\n" << string(60, '-') << endl;
                 }
-            } catch (const exception& e) {
-                cout << "\n❌ Error displaying credential '" << credentials[i].getTitle() 
-                     << "': " << e.what() << endl;
-                cout << "Skipping this credential...\n";
+            } catch (...) {
             }
         }
         cout << "\n" << string(60, '=') << endl;
-        cout << "Total: " << displayedCount << " of " << credentials.size() 
-             << " credential(s) displayed successfully\n";
-        
-        if (displayedCount < credentials.size()) {
-            cout << "⚠️  " << (credentials.size() - displayedCount) 
-                 << " credential(s) could not be displayed due to errors\n";
-        }
     }
 
-    void searchCredentials(const string& searchTerm) const {
-        if (credentials.empty()) {
-            cout << "\n No credentials available to search.\n";
-            return;
-        }
-
-        string lowerSearch = Utilities::toLower(searchTerm);
-        vector<Credential> results;
-
-        for (const auto& cred : credentials) {
-            if (Utilities::toLower(cred.getTitle()).find(lowerSearch) != string::npos ||
-                Utilities::toLower(cred.getUsername()).find(lowerSearch) != string::npos ||
-                Utilities::toLower(cred.getCategory()).find(lowerSearch) != string::npos) {
-                results.push_back(cred);
-            }
-        }
-
-        if (results.empty()) {
-            cout << "\n No matching credentials found for '" << searchTerm << "'\n";
-            return;
-        }
-
-        cout << "\n SEARCH RESULTS (" << results.size() << " found for '" << searchTerm << "')\n";
-        for (size_t i = 0; i < results.size(); i++) {
-            cout << "\n[" << (i + 1) << "]";
-            results[i].display();
-        }
-    }
-
+    // Sorts credentials by last updated date (newest first)
     void sortByDate() {
         sort(credentials.begin(), credentials.end(),
              [](const Credential &a, const Credential &b) {
@@ -623,54 +482,68 @@ public:
              });
     }
 
-    void sortByTitle() {
+    // Sorts credentials alphabetically by name (case-insensitive)
+    void sortByName() {
         sort(credentials.begin(), credentials.end(),
              [](const Credential &a, const Credential &b) {
-                 return Utilities::toLower(a.getTitle()) < Utilities::toLower(b.getTitle());
+                 return Utilities::toLower(a.getName()) < Utilities::toLower(b.getName());
              });
     }
 
-    int getCredentialCount() const { return credentials.size(); }
+    // Searches credentials by name (case-insensitive partial match)
+    vector<Credential> searchCredentialsByName(const string& searchTerm) const {
+        vector<Credential> results;
+        string lowerSearch = Utilities::toLower(searchTerm);
 
+        for (const auto& cred : credentials) {
+            string lowerName = Utilities::toLower(cred.getName());
+            if (lowerName.find(lowerSearch) != string::npos) {
+                results.push_back(cred);
+            }
+        }
+
+        return results;
+    }
+
+    // Returns the number of credentials for this user
+    int getCredentialCount() const { return static_cast<int>(credentials.size()); }
+
+    // Returns pointer to credential at given index (nullptr if invalid)
     Credential* getCredentialByIndex(int index) {
-        if (index < 0 || index >= (int)credentials.size()) return nullptr;
+        if (index < 0 || index >= static_cast<int>(credentials.size())) return nullptr;
         return &credentials[index];
     }
 
+    // Removes credential at specified index
     void deleteCredential(int index) {
-        if (index < 0 || index >= (int)credentials.size()) {
+        if (index < 0 || index >= static_cast<int>(credentials.size())) {
             throw out_of_range("Invalid credential index");
         }
         credentials.erase(credentials.begin() + index);
     }
 
-    // Serialization
+    // Serializes user data to string for file storage
     string serialize() const {
         ostringstream oss;
         oss << username << "|" << hashedPassword << "|" << salt << "|" << userType;
         return oss.str();
     }
 
+    // Deserializes user data from string (supports legacy format without salt)
     static User deserialize(const string& data, const vector<Credential>& creds) {
         istringstream iss(data);
-        string username, hashedPassword, salt, userType;
-        
+        string username, hashedPassword, saltOrType, userType;
         getline(iss, username, '|');
         getline(iss, hashedPassword, '|');
-        
-        // Check if salt field exists (backward compatibility)
-        string temp;
-        getline(iss, temp, '|');
+        getline(iss, saltOrType, '|');
         if (getline(iss, userType, '|')) {
-            // New format: username|hashedPassword|salt|userType
-            salt = temp;
+            // Current format: username|hash|salt|type
+            return User(username, hashedPassword, saltOrType, userType, creds);
         } else {
-            // Old format: username|hashedPassword|userType
-            userType = temp;
-            salt = Utilities::generateSalt(); // Generate new salt for old users
+            // Legacy format: username|hash|type (generate new salt)
+            string salt = Utilities::generateSalt();
+            return User(username, hashedPassword, salt, saltOrType, creds);
         }
-
-        return User(username, hashedPassword, salt, userType, creds);
     }
 
     void saveCredentialsToFile() const;
@@ -678,16 +551,30 @@ public:
 };
 
 // ============================================================================
-// CLASS 4: FileManager
+// FILE MANAGER CLASS
 // ============================================================================
 class FileManager {
 public:
+    // Creates data directory if it doesn't exist
+    // Ensures the data folder exists before attempting file operations
+    static void ensureDataDirectory() {
+        try {
+            if (!fs::exists(Constants::DATA_DIR)) {
+                fs::create_directories(Constants::DATA_DIR);
+            }
+        } catch (const exception&) {
+        }
+    }
+
+    // Loads all users from file and their associated credentials
+    // Returns empty vector if file doesn't exist (first run)
     static vector<User> loadUsers() {
         vector<User> users;
+        ensureDataDirectory();
+
         ifstream file(Constants::USERS_FILE);
-        
         if (!file.is_open()) {
-            return users; // Return empty vector if file doesn't exist
+            return users; // no users file yet
         }
 
         string line;
@@ -695,38 +582,42 @@ public:
             if (!line.empty()) {
                 try {
                     User user = User::deserialize(line, {});
+                    // now load their credentials from their file
                     user.loadCredentialsFromFile();
                     users.push_back(user);
-                } catch (const exception& e) {
-                    cerr << "❌ Error loading user: " << e.what() << endl;
+                } catch (...) {
                 }
             }
         }
-        
+
         file.close();
         return users;
     }
 
+    // Saves all users to file and triggers credential file saves for each user
+    // Overwrites existing file to ensure data consistency
     static void saveUsers(const vector<User>& users) {
-        ofstream file(Constants::USERS_FILE);
-        
+        ensureDataDirectory();
+        ofstream file(Constants::USERS_FILE, ios::trunc);
         if (!file.is_open()) {
-            throw runtime_error("Cannot open users file for writing");
+            throw runtime_error("Cannot open users file for writing: " + Constants::USERS_FILE);
         }
 
         for (const auto& user : users) {
-            file << user.serialize() << endl;
+            file << user.serialize() << "\n";
+            // write user's credentials file
             user.saveCredentialsToFile();
         }
-        
+
         file.close();
     }
 
+    // Loads credentials for a specific user from their individual credential file
+    // Returns empty vector if file doesn't exist
     static vector<Credential> loadCredentials(const string& username) {
         vector<Credential> credentials;
         string filename = Constants::CREDENTIALS_FILE_PREFIX + username + ".dat";
         ifstream file(filename);
-        
         if (!file.is_open()) {
             return credentials;
         }
@@ -736,33 +627,33 @@ public:
             if (!line.empty()) {
                 try {
                     credentials.push_back(Credential::deserialize(line));
-                } catch (const exception& e) {
-                    cerr << "❌ Error loading credential for " << username << ": " << e.what() << endl;
+                } catch (...) {
                 }
             }
         }
-        
+
         file.close();
         return credentials;
     }
 
+    // Saves credentials for a specific user to their individual credential file
+    // Overwrites existing file to ensure data consistency
     static void saveCredentials(const string& username, const vector<Credential>& credentials) {
+        ensureDataDirectory();
         string filename = Constants::CREDENTIALS_FILE_PREFIX + username + ".dat";
-        ofstream file(filename);
-        
+        ofstream file(filename, ios::trunc);
         if (!file.is_open()) {
-            throw runtime_error("Cannot open credentials file for writing");
+            throw runtime_error("Cannot open credentials file for writing: " + filename);
         }
 
         for (const auto& cred : credentials) {
-            file << cred.serialize() << endl;
+            file << cred.serialize() << "\n";
         }
-        
+
         file.close();
     }
 };
 
-// Implement these after FileManager definition
 void User::saveCredentialsToFile() const {
     FileManager::saveCredentials(username, credentials);
 }
@@ -772,7 +663,7 @@ void User::loadCredentialsFromFile() {
 }
 
 // ============================================================================
-// CLASS 5: PasswordManager (Main Application)
+// PASSWORD MANAGER CLASS (Main Application)
 // ============================================================================
 class PasswordManager {
 private:
@@ -781,31 +672,44 @@ private:
     bool isRunning = true;
     PasswordGenerator pwdGenerator;
 
+    // Creates default admin and normal users if no users exist in the system
+    // This ensures the application has at least one admin account for initial access
     void initializeDefaultUsers() {
-        // Only create default users if no users exist
         if (users.empty()) {
             users.push_back(User("admin", "admin123", "admin"));
             users.push_back(User("aymen", "12345678", "normal"));
+            try {
+                FileManager::saveUsers(users);
+            } catch (...) {
+            }
             cout << "✅ Default users created (admin/admin123, aymen/12345678)\n";
         }
     }
 
+    // Synchronizes current user changes back to users vector
+    // This ensures that any modifications made while logged in are saved to the users list
     void syncCurrentUserToVector() {
-        // Update the current user in the users vector
+        if (!currentUser) return;
         for (auto& user : users) {
             if (user.getUsername() == currentUser->getUsername()) {
                 user = *currentUser;
-                break;
+                return;
             }
         }
+        // If user not found in vector, add them (shouldn't happen in normal flow)
+        users.push_back(*currentUser);
     }
 
-    // Yes/No helper that normalizes input handling
+    // Prompts user for yes/no answer with validation
     bool askYesNo(const string &prompt) {
         while (true) {
             cout << prompt;
             char answer;
-            cin >> answer;
+            if (!(cin >> answer)) {
+                cin.clear();
+                cin.ignore(numeric_limits<streamsize>::max(), '\n');
+                continue;
+            }
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             if (answer == 'y' || answer == 'Y') return true;
             if (answer == 'n' || answer == 'N') return false;
@@ -813,7 +717,30 @@ private:
         }
     }
 
-    // Compact credentials list for selection screens
+    // Displays category menu and returns selected category
+    string selectCategory() {
+        cout << "\nSelect Category:\n";
+        cout << "1. Website\n";
+        cout << "2. Desktop\n";
+        cout << "3. Game\n";
+        cout << "Choice: ";
+        
+        int choice = getValidatedInput(1, 3);
+        return Constants::VALID_CATEGORIES[choice - 1];
+    }
+
+    // Displays user type menu and returns selected type (admin or normal)
+    string selectUserType() {
+        cout << "\nSelect User Type:\n";
+        cout << "1. Admin\n";
+        cout << "2. Normal\n";
+        cout << "Choice: ";
+        
+        int choice = getValidatedInput(1, 2);
+        return (choice == 1) ? "admin" : "normal";
+    }
+
+    // Displays a compact list of credentials (name and category only)
     void listCredentialsCompact() const {
         const auto &creds = currentUser->getCredentials();
         if (creds.empty()) {
@@ -822,31 +749,33 @@ private:
         }
         cout << "\n=== YOUR CREDENTIALS ===\n";
         for (size_t i = 0; i < creds.size(); ++i) {
-            cout << "[" << (i + 1) << "] " << creds[i].getTitle() 
-                 << " | " << creds[i].getUsername() 
-                 << " | " << creds[i].getCategory() << "\n";
+            cout << "[" << (i + 1) << "] Name: " << creds[i].getName()
+                 << " | Category: " << creds[i].getCategory() << "\n";
         }
     }
 
+    // Displays login menu and handles user selection
     void showLoginMenu() {
         cout << "\n" << string(40, '=') << endl;
         cout << "PASSWORD MANAGER - LOGIN MENU" << endl;
         cout << string(40, '=') << endl;
-        cout << "1. Login\n2. Exit\n";
+        cout << "1. Login\n2. Register\n3. Exit\n";
         cout << "Choice: ";
-        
-        int choice = getValidatedInput(1, 2);
+
+        int choice = getValidatedInput(1, 3);
 
         switch (choice) {
             case 1: login(); break;
-            case 2: cout << "Goodbye!\n"; isRunning = false; break;
+            case 2: registerUser(); break;
+            case 3: cout << "Goodbye!\n"; isRunning = false; break;
         }
     }
 
+    // Handles user login with maximum attempt limit
     void login() {
         const int MAX_ATTEMPTS = 3;
         int attempts = 0;
-        
+
         while (attempts < MAX_ATTEMPTS) {
             string username, password;
             cout << "\n--- Login ---\n";
@@ -855,7 +784,6 @@ private:
             cout << "Password: ";
             getline(cin, password);
 
-            // Check if user exists
             User* foundUser = nullptr;
             for (auto &user : users) {
                 if (user.getUsername() == username) {
@@ -871,9 +799,9 @@ private:
                     cout << "⚠️ Attempt " << attempts << " of " << MAX_ATTEMPTS << ". Please try again.\n";
                 }
             } else {
-                // User exists, check password
                 if (foundUser->verifyPassword(password)) {
                     currentUser = make_unique<User>(*foundUser);
+                    currentUser->loadCredentialsFromFile();
                     cout << "✅ Login successful! Welcome, " << username << ".\n";
                     return;
                 } else {
@@ -885,14 +813,16 @@ private:
                 }
             }
         }
-        
-        cout << " Maximum login attempts reached. Returning to main menu.\n";
+
+        cout << "Maximum login attempts reached. Returning to main menu.\n";
     }
 
+    // Handles new user registration with password validation
+    // Admin users can create other users with admin privileges
     void registerUser() {
         string username, password, userType = "normal";
         cout << "\n--- User Registration ---\n";
-        
+
         cout << "Enter username: ";
         getline(cin, username);
         username = Utilities::trim(username);
@@ -902,7 +832,6 @@ private:
             return;
         }
 
-        // Check if username exists
         for (const auto &user : users) {
             if (user.getUsername() == username) {
                 cout << "❌ Username already exists!\n";
@@ -910,24 +839,21 @@ private:
             }
         }
 
-        // Ask if admin wants to generate a random password
         bool generateChoice = askYesNo("\nGenerate random password? (y/n): ");
-        
+
         if (generateChoice) {
-            // Generate random password
             cout << "Password length (" << Constants::MIN_PASSWORD_LENGTH << "-" << Constants::MAX_PASSWORD_LENGTH << "): ";
             int length = getValidatedInput(Constants::MIN_PASSWORD_LENGTH, Constants::MAX_PASSWORD_LENGTH);
-            
+
             password = pwdGenerator.generate(length);
             cout << "\nGenerated Password: " << password << endl;
         } else {
-            // Manual password input with retry
             while (true) {
                 cout << "Enter password: ";
                 getline(cin, password);
 
                 if (Utilities::isStrongPassword(password)) {
-                    break; // Valid password, exit loop
+                    break;
                 } else {
                     cout << "❌ Password must be at least " << Constants::MIN_PASSWORD_LENGTH << " characters long.\n";
                     cout << "Please try again.\n";
@@ -935,38 +861,35 @@ private:
             }
         }
 
-        // If admin is registering, allow them to specify user type
+        // If an admin is logged in, allow choosing user type
         if (currentUser && currentUser->getUserType() == "admin") {
-            while (true) {
-                cout << "User type (admin/normal): ";
-                getline(cin, userType);
-                if (userType == "admin" || userType == "normal") {
-                    break;
-                } else {
-                    cout << "❌ Invalid user type! Must be 'admin' or 'normal'.\n";
-                }
-            }
+            userType = selectUserType();
         }
 
         users.push_back(User(username, password, userType));
-        FileManager::saveUsers(users);
-        cout << "✅ Registration successful!";
-        if (currentUser && currentUser->getUserType() == "admin") {
-            cout << " User '" << username << "' created as " << userType << " user.\n";
-        } else {
-            cout << " You can now login.\n";
+        try {
+            FileManager::saveUsers(users);
+            cout << "✅ Registration successful!";
+            if (currentUser && currentUser->getUserType() == "admin") {
+                cout << " User '" << username << "' created as " << userType << " user.\n";
+            } else {
+                cout << " You can now login.\n";
+            }
+        } catch (const exception& e) {
+            cout << "❌ Error saving user: " << e.what() << endl;
         }
     }
 
+    // Displays menu for normal users with credential management options
     void showUserMenu() {
         cout << "\n" << string(40, '=') << endl;
         cout << "USER DASHBOARD - " << currentUser->getUsername() << endl;
         cout << string(40, '=') << endl;
         cout << "1. Add Credential\n2. View All Credentials\n3. Search Credentials\n";
-        cout << "4. Edit Credential\n5. Delete Credential\n6. Logout\n";
+        cout << "4. Edit Credential\n5. Delete Credential\n6. Change Password\n7. Logout\n";
         cout << "Choice: ";
-        
-        int choice = getValidatedInput(1, 6);
+
+        int choice = getValidatedInput(1, 7);
 
         switch (choice) {
             case 1: addCredential(); break;
@@ -974,10 +897,12 @@ private:
             case 3: searchCredentials(); break;
             case 4: editCredential(); break;
             case 5: deleteCredential(); break;
-            case 6: logout(); break;
+            case 6: changePassword(); break;
+            case 7: logout(); break;
         }
     }
 
+    // Displays menu for admin users with additional system management options
     void showAdminMenu() {
         cout << "\n" << string(40, '=') << endl;
         cout << "⚡ ADMIN DASHBOARD" << endl;
@@ -987,7 +912,7 @@ private:
         cout << "3. System Statistics\n";
         cout << "4. Logout\n";
         cout << "Choice: ";
-        
+
         int choice = getValidatedInput(1, 4);
 
         switch (choice) {
@@ -998,12 +923,13 @@ private:
         }
     }
 
+    // Admin submenu for credential management
     void adminCredentialMenu() {
         cout << "\n=== CREDENTIALS ===" << endl;
         cout << "1. Add Credential\n2. View All Credentials\n3. Search Credentials\n";
         cout << "4. Edit Credential\n5. Delete Credential\n6. Back\n";
         cout << "Choice: ";
-        
+
         int choice = getValidatedInput(1, 6);
 
         switch (choice) {
@@ -1014,18 +940,18 @@ private:
             case 5: deleteCredential(); break;
             case 6: return;
         }
-        
-        // Show menu again after action (except back)
+
         if (choice != 6) {
             adminCredentialMenu();
         }
     }
 
+    // Admin submenu for user management
     void adminUserMenu() {
         cout << "\n=== USERS ===" << endl;
         cout << "1. Register User\n2. Search User\n3. Edit User\n4. Delete User\n5. Back\n";
         cout << "Choice: ";
-        
+
         int choice = getValidatedInput(1, 5);
 
         switch (choice) {
@@ -1035,57 +961,40 @@ private:
             case 4: deleteUser(); break;
             case 5: return;
         }
-        
-        // Show menu again after action (except back)
+
         if (choice != 5) {
             adminUserMenu();
         }
     }
 
+    // Adds a new credential with optional random password generation
     void addCredential() {
         try {
-            string title, username, password, category;
+            string name, password, category;
 
             cout << "\n--- Add New Credential ---\n";
-            cout << "Title: ";
-            getline(cin, title);
-            
-            cout << "Username: ";
-            getline(cin, username);
-            
-            // Ask if user wants to generate a random password
+            cout << "Name: ";
+            getline(cin, name);
+
             bool generateChoice = askYesNo("\nGenerate random password? (y/n): ");
-            
+
             if (generateChoice) {
-                // Generate random password
                 cout << "Password length (" << Constants::MIN_PASSWORD_LENGTH << "-" << Constants::MAX_PASSWORD_LENGTH << "): ";
                 int length = getValidatedInput(Constants::MIN_PASSWORD_LENGTH, Constants::MAX_PASSWORD_LENGTH);
-                
+
                 password = pwdGenerator.generate(length);
                 cout << "\nGenerated Password: " << password << endl;
                 cout << "Strength: " << (length >= 12 ? "Strong" : "Good") << endl;
             } else {
-                // Manual password input - no length restriction for credential passwords
                 cout << "Password: ";
                 getline(cin, password);
             }
 
-            // Category input with retry
-            while (true) {
-                cout << "Category (Website/Desktop/Game): ";
-                getline(cin, category);
-                
-                if (Utilities::isValidCategory(category)) {
-                    break; // Valid category, exit loop
-                } else {
-                    cout << "❌ Invalid category! Must be Website, Desktop, or Game.\n";
-                    cout << "Please try again.\n";
-                }
-            }
+            category = selectCategory();
 
-            Credential newCred(title, username, password, category);
+            Credential newCred(name, password, category);
             currentUser->addCredential(newCred);
-            
+
             syncCurrentUserToVector();
             FileManager::saveUsers(users);
             cout << "✅ Credential added successfully!\n";
@@ -1095,18 +1004,20 @@ private:
         }
     }
 
+    // Menu for viewing credentials with password reveal option
     void viewCredentialsMenu() {
         cout << "\n=== VIEW ALL CREDENTIALS ===" << endl;
         cout << "1. View masked (passwords hidden)\n2. View with passwords revealed\n3. Back\n";
         cout << "Choice: ";
-        
+
         int choice = getValidatedInput(1, 3);
-        
+
         if (choice == 3) return;
-        
+
         currentUser->viewCredentials(choice == 2);
     }
 
+    // Provides search and sort functionality for credentials
     void searchCredentials() {
         if (currentUser->getCredentialCount() == 0) {
             cout << "\nNo credentials to search.\n";
@@ -1114,40 +1025,77 @@ private:
         }
 
         cout << "\n=== SEARCH CREDENTIALS ===" << endl;
-        cout << "1. Sort by last updated (show all)\n2. Sort by title (show all)\n3. Back\n";
+        cout << "1. Search by name\n2. Sort by last updated (show all)\n3. Sort by name (show all)\n4. Back\n";
         cout << "Choice: ";
-        
-        int choice = getValidatedInput(1, 3);
-        
+
+        int choice = getValidatedInput(1, 4);
+
         switch (choice) {
-            case 1: 
+            case 1: {
+                string searchTerm;
+                cout << "\nEnter name to search: ";
+                getline(cin, searchTerm);
+                searchTerm = Utilities::trim(searchTerm);
+
+                if (searchTerm.empty()) {
+                    cout << "❌ Search term cannot be empty.\n";
+                    return;
+                }
+
+                vector<Credential> results = currentUser->searchCredentialsByName(searchTerm);
+
+                if (results.empty()) {
+                    cout << "\n❌ No credentials found matching '" << searchTerm << "'.\n";
+                    return;
+                }
+
+                cout << "\n" << string(60, '=') << endl;
+                cout << "SEARCH RESULTS (" << results.size() << " found for '" << searchTerm << "')" << endl;
+                cout << string(60, '=') << endl;
+
+                bool reveal = askYesNo("\nReveal passwords? (y/n): ");
+                bool showPasswords = reveal;
+
+                for (size_t i = 0; i < results.size(); i++) {
+                    try {
+                        cout << "\n[" << (i + 1) << " of " << results.size() << "]";
+                        results[i].display(showPasswords);
+                        if (i < results.size() - 1) {
+                            cout << "\n" << string(60, '-') << endl;
+                        }
+                    } catch (...) {
+                    }
+                }
+                cout << "\n" << string(60, '=') << endl;
+                break;
+            }
+            case 2:
                 currentUser->sortByDate();
                 cout << "\n✅ Sorted by last updated date. Showing all credentials:\n";
                 currentUser->viewCredentials();
                 break;
-            case 2:
-                currentUser->sortByTitle();
-                cout << "\n✅ Sorted by title. Showing all credentials:\n";
+            case 3:
+                currentUser->sortByName();
+                cout << "\n✅ Sorted by name. Showing all credentials:\n";
                 currentUser->viewCredentials();
                 break;
-            case 3:
+            case 4:
                 return;
         }
-        
+
         syncCurrentUserToVector();
     }
 
+    // Allows editing of credential name, password, and category
     void editCredential() {
         if (currentUser->getCredentialCount() == 0) {
             cout << "\nNo credentials to edit.\n";
             return;
         }
-
-        // Show a compact list for better readability
         listCredentialsCompact();
         cout << "\nEnter credential number to edit (0 to cancel): ";
         int choice = getValidatedInput(0, currentUser->getCredentialCount());
-        
+
         if (choice == 0) return;
 
         Credential* cred = currentUser->getCredentialByIndex(choice - 1);
@@ -1157,27 +1105,23 @@ private:
         }
 
         try {
-            string newTitle, newUsername, newPassword, newCategory;
+            string newName, newPassword, newCategory;
 
-            cout << "\nEditing: " << cred->getTitle() << endl;
+            cout << "\nEditing: Name = " << cred->getName() << ", Category = " << cred->getCategory() << endl;
             cout << "Leave fields blank to keep current values.\n";
 
-            cout << "New Title: ";
-            getline(cin, newTitle);
-            if (!newTitle.empty()) cred->setTitle(newTitle);
-
-            cout << "New Username: ";
-            getline(cin, newUsername);
-            if (!newUsername.empty()) cred->setUsername(newUsername);
+            cout << "New Name: ";
+            getline(cin, newName);
+            if (!Utilities::trim(newName).empty()) cred->setName(newName);
 
             bool changePassword = askYesNo("\nChange password? (y/n): ");
             if (changePassword) {
                 bool generateChoice = askYesNo("Generate new random password? (y/n): ");
-                
+
                 if (generateChoice) {
                     cout << "Password length (" << Constants::MIN_PASSWORD_LENGTH << "-" << Constants::MAX_PASSWORD_LENGTH << "): ";
                     int length = getValidatedInput(Constants::MIN_PASSWORD_LENGTH, Constants::MAX_PASSWORD_LENGTH);
-                    
+
                     newPassword = pwdGenerator.generate(length);
                     cout << "\nGenerated Password: " << newPassword << endl;
                     cred->updatePassword(newPassword);
@@ -1187,52 +1131,35 @@ private:
                     if (!newPassword.empty()) cred->updatePassword(newPassword);
                 }
             }
-
-            // Always ask about category
             bool changeCategory = askYesNo("\nChange category? (y/n): ");
             if (changeCategory) {
-                // Category input with retry - same validation as add credential
-                while (true) {
-                    cout << "New Category (Website/Desktop/Game): ";
-                    getline(cin, newCategory);
-                    
-                    if (Utilities::isValidCategory(newCategory)) {
-                        cred->setCategory(newCategory);
-                        break; // Valid category, exit loop
-                    } else {
-                        cout << "❌ Invalid category! Must be Website, Desktop, or Game.\n";
-                        cout << "Please try again.\n";
-                    }
-                }
+                newCategory = selectCategory();
+                cred->setCategory(newCategory);
             }
-
             syncCurrentUserToVector();
             FileManager::saveUsers(users);
             cout << "✅ Credential updated successfully!\n";
-
         } catch (const exception& e) {
             cout << "❌ Error: " << e.what() << endl;
         }
     }
 
+    // Deletes a credential with confirmation prompt
     void deleteCredential() {
         if (currentUser->getCredentialCount() == 0) {
             cout << "\n📭 No credentials to delete.\n";
             return;
         }
-
         listCredentialsCompact();
         cout << "\nEnter credential number to delete (0 to cancel): ";
         int choice = getValidatedInput(0, currentUser->getCredentialCount());
-        
         if (choice == 0) return;
-
-        string title = currentUser->getCredentialByIndex(choice - 1)->getTitle();
-        bool confirm = askYesNo("⚠️ Are you sure you want to delete '" + title + "'? (y/n): ");
-        
+        Credential* credToDelete = currentUser->getCredentialByIndex(choice - 1);
+        string name = credToDelete->getName();
+        string category = credToDelete->getCategory();
+        bool confirm = askYesNo("⚠️ Are you sure you want to delete credential (Name: " + name + ", Category: " + category + ")? (y/n): ");
         if (confirm) {
             currentUser->deleteCredential(choice - 1);
-            
             syncCurrentUserToVector();
             FileManager::saveUsers(users);
             cout << "✅ Credential deleted successfully!\n";
@@ -1241,52 +1168,46 @@ private:
         }
     }
 
+    // Allows user to change their own password (requires current password)
     void changePassword() {
         try {
             string currentPwd, newPwd;
             cout << "\n--- Change Password ---\n";
             cout << "Current Password: ";
             getline(cin, currentPwd);
-            
             cout << "New Password: ";
             getline(cin, newPwd);
-
-            // Update current user
             currentUser->changePassword(currentPwd, newPwd);
-            
             syncCurrentUserToVector();
             FileManager::saveUsers(users);
             cout << "✅ Password changed successfully!\n";
-            
         } catch (const exception& e) {
             cout << "❌ Error: " << e.what() << endl;
         }
     }
 
+    // Displays all users in the system (admin only)
     void viewAllUsers() {
         cout << "\n=== SYSTEM USERS ===\n";
         for (size_t i = 0; i < users.size(); i++) {
-            cout << "[" << (i + 1) << "] 👤 " << users[i].getUsername() 
+            cout << "[" << (i + 1) << "] 👤 " << users[i].getUsername()
                  << " | Type: " << users[i].getUserType()
                  << " | Credentials: " << users[i].getCredentialCount() << endl;
         }
     }
 
+    // Provides search and sort functionality for users (admin only)
     void searchUserMenu() {
         if (users.empty()) {
             cout << "\n📭 No users to search.\n";
             return;
         }
-
         cout << "\n=== SEARCH USERS ===" << endl;
         cout << "1. By username\n2. By credential count\n3. Back\n";
         cout << "Choice: ";
-        
         int choice = getValidatedInput(1, 3);
-        
         switch (choice) {
             case 1: {
-                // Sort by username alphabetically
                 sort(users.begin(), users.end(),
                      [](const User &a, const User &b) {
                          return Utilities::toLower(a.getUsername()) < Utilities::toLower(b.getUsername());
@@ -1296,7 +1217,6 @@ private:
                 break;
             }
             case 2: {
-                // Sort by credential count (descending)
                 sort(users.begin(), users.end(),
                      [](const User &a, const User &b) {
                          return a.getCredentialCount() > b.getCredentialCount();
@@ -1308,75 +1228,60 @@ private:
             case 3:
                 return;
         }
-        
         FileManager::saveUsers(users);
     }
 
+    // Allows admin to edit user properties (username, password, type)
     void editUser() {
         if (users.empty()) {
             cout << "\n📭 No users to edit.\n";
             return;
         }
-
         viewAllUsers();
         cout << "\nEnter user number to edit (0 to cancel): ";
-        int choice = getValidatedInput(0, (int)users.size());
-        
+        int choice = getValidatedInput(0, static_cast<int>(users.size()));
         if (choice == 0) return;
-        if (choice < 1 || choice > (int)users.size()) {
+        if (choice < 1 || choice > static_cast<int>(users.size())) {
             cout << "❌ Invalid user selection.\n";
             return;
         }
-
         User* userToEdit = &users[choice - 1];
-        
-        // Prevent admin from editing themselves
-        if (userToEdit->getUsername() == currentUser->getUsername()) {
+        if (currentUser && userToEdit->getUsername() == currentUser->getUsername()) {
             cout << "❌ You cannot edit your own account from here. Use 'Change Password' instead.\n";
             return;
         }
-
         try {
             string newUsername, newUserType;
-            
             cout << "\nEditing user: " << userToEdit->getUsername() << endl;
             cout << "Leave fields blank to keep current values.\n";
-
             cout << "New Username: ";
             getline(cin, newUsername);
-            if (!newUsername.empty()) {
+            if (!Utilities::trim(newUsername).empty()) {
                 newUsername = Utilities::trim(newUsername);
-                
-                // Check if new username already exists
                 for (const auto& user : users) {
                     if (user.getUsername() == newUsername && &user != userToEdit) {
                         cout << "❌ Username already exists!\n";
                         return;
                     }
                 }
-                
+
                 userToEdit->setUsername(newUsername);
                 cout << "✅ Username updated to: " << newUsername << endl;
             }
-
             bool resetPassword = askYesNo("\nReset password? (y/n): ");
-            
             if (resetPassword) {
                 bool generateChoice = askYesNo("Generate random password? (y/n): ");
-                
                 string newPassword;
                 if (generateChoice) {
                     cout << "Password length (" << Constants::MIN_PASSWORD_LENGTH << "-" << Constants::MAX_PASSWORD_LENGTH << "): ";
                     int length = getValidatedInput(Constants::MIN_PASSWORD_LENGTH, Constants::MAX_PASSWORD_LENGTH);
-                    
                     newPassword = pwdGenerator.generate(length);
                     cout << "\nGenerated Password: " << newPassword << endl;
                 } else {
-                    // Manual password input with retry
                     while (true) {
                         cout << "Enter new password: ";
                         getline(cin, newPassword);
-                        
+
                         if (Utilities::isStrongPassword(newPassword)) {
                             break;
                         } else {
@@ -1384,80 +1289,60 @@ private:
                         }
                     }
                 }
-                
-                // Reset password using admin method
                 userToEdit->resetPasswordByAdmin(newPassword);
-                
-                // Update in users vector
                 for (auto& user : users) {
                     if (user.getUsername() == userToEdit->getUsername()) {
                         user = *userToEdit;
                         break;
                     }
                 }
-                
                 cout << "✅ Password reset successfully!\n";
             }
-
-            cout << "New User Type (admin/normal): ";
-            getline(cin, newUserType);
-            if (!newUserType.empty()) {
-                if (newUserType == "admin" || newUserType == "normal") {
-                    userToEdit->setUserType(newUserType);
-                    cout << "✅ User type updated to: " << newUserType << endl;
-                } else {
-                    cout << "❌ Invalid user type! Must be 'admin' or 'normal'.\n";
-                    return;
-                }
+            bool changeUserType = askYesNo("\nChange user type? (y/n): ");
+            if (changeUserType) {
+                newUserType = selectUserType();
+                userToEdit->setUserType(newUserType);
+                cout << "✅ User type updated to: " << newUserType << endl;
             }
-
             FileManager::saveUsers(users);
             cout << "✅ User updated successfully!\n";
-
         } catch (const exception& e) {
             cout << "❌ Error: " << e.what() << endl;
         }
     }
 
+    // Deletes a user and all associated credentials (admin only)
     void deleteUser() {
         if (users.empty()) {
-            cout << "\n No users to delete.\n";
+            cout << "\nNo users to delete.\n";
             return;
         }
-
         viewAllUsers();
         cout << "\nEnter user number to delete (0 to cancel): ";
-        int choice = getValidatedInput(0, (int)users.size());
-        
+        int choice = getValidatedInput(0, static_cast<int>(users.size()));
         if (choice == 0) return;
-        if (choice < 1 || choice > (int)users.size()) {
+        if (choice < 1 || choice > static_cast<int>(users.size())) {
             cout << "❌ Invalid user selection.\n";
             return;
         }
-
         User* userToDelete = &users[choice - 1];
-        
-        // Prevent admin from deleting themselves
-        if (userToDelete->getUsername() == currentUser->getUsername()) {
+        if (currentUser && userToDelete->getUsername() == currentUser->getUsername()) {
             cout << "❌ You cannot delete your own account!\n";
             return;
         }
-
         string username = userToDelete->getUsername();
         int credentialCount = userToDelete->getCredentialCount();
-        
+
         string confirmMsg = "⚠️ Are you sure you want to delete user '" + username + "'?\n";
         confirmMsg += "This will also delete " + to_string(credentialCount) + " associated credentials. (y/n): ";
         bool confirm = askYesNo(confirmMsg);
-        
         if (confirm) {
-            // Delete user's credential file
             string filename = Constants::CREDENTIALS_FILE_PREFIX + username + ".dat";
-            remove(filename.c_str());
-            
-            // Remove user from vector
+            try {
+                fs::remove(filename);
+            } catch (...) {
+            }
             users.erase(users.begin() + choice - 1);
-            
             FileManager::saveUsers(users);
             cout << "✅ User '" << username << "' and all associated credentials deleted successfully!\n";
         } else {
@@ -1465,49 +1350,65 @@ private:
         }
     }
 
+    // Displays system statistics (total users, credentials, averages)
     void showSystemStats() {
         cout << "\n=== SYSTEM STATISTICS ===\n";
         cout << "Total Users: " << users.size() << endl;
-        
         int totalCredentials = 0;
         int adminCount = 0;
         int normalCount = 0;
-        
         for (const auto& user : users) {
             totalCredentials += user.getCredentialCount();
             if (user.getUserType() == "admin") adminCount++;
             else normalCount++;
         }
-        
         cout << "Admin Users: " << adminCount << endl;
         cout << "Normal Users: " << normalCount << endl;
         cout << "Total Credentials: " << totalCredentials << endl;
-        cout << "Average Credentials per User: " 
-             << (users.empty() ? 0 : (double)totalCredentials / users.size()) << endl;
+        cout << "Average Credentials per User: "
+             << (users.empty() ? 0.0 : static_cast<double>(totalCredentials) / users.size()) << endl;
     }
 
+    // Logs out current user and saves all data to files
     void logout() {
-        FileManager::saveUsers(users);
-        currentUser.reset();
-        cout << "✅ Logged out successfully. Data saved.\n";
+        try {
+            FileManager::saveUsers(users);
+            currentUser.reset();
+            cout << "✅ Logged out successfully. Data saved.\n";
+        } catch (const exception& e) {
+            cout << "❌ Error saving data on logout: " << e.what() << endl;
+        }
     }
 
+    // Validates and returns integer input within specified range
+    // Handles invalid input gracefully with error messages
     int getValidatedInput(int min, int max) {
         int input;
+        string line;
         while (true) {
-            cin >> input;
-            if (cin.fail() || input < min || input > max) {
+            if (!getline(cin, line)) {
                 cin.clear();
-                cin.ignore(numeric_limits<streamsize>::max(), '\n');
-                // Show human-friendly range: include 0 only when allowed
-                if (min == 0) {
-                    cout << "❌ Invalid input. Enter a number between 0 and " << max << ": ";
-                } else {
-                    cout << "❌ Invalid input. Enter a number between " << min << " and " << max << ": ";
+                continue;
+            }
+
+            try {
+                size_t pos;
+                input = stoi(line, &pos);
+                string remaining = Utilities::trim(line.substr(pos));
+                if (!remaining.empty()) {
+                    cout << "❌ Invalid input. Enter a whole number between " 
+                         << (min == 0 ? "0" : to_string(min)) << " and " << max << ": ";
+                    continue;
                 }
-            } else {
-                cin.ignore(numeric_limits<streamsize>::max(), '\n');
+                if (input < min || input > max) {
+                    cout << "❌ Invalid input. Enter a number between " 
+                         << (min == 0 ? "0" : to_string(min)) << " and " << max << ": ";
+                    continue;
+                }
                 return input;
+            } catch (...) {
+                cout << "❌ Invalid input. Enter a whole number between " 
+                     << (min == 0 ? "0" : to_string(min)) << " and " << max << ": ";
             }
         }
     }
@@ -1515,10 +1416,10 @@ private:
 public:
     PasswordManager() {
         try {
+            FileManager::ensureDataDirectory();
             users = FileManager::loadUsers();
             initializeDefaultUsers();
-        } catch (const exception& e) {
-            cerr << "❌ Error loading data: " << e.what() << endl;
+        } catch (...) {
             initializeDefaultUsers();
         }
     }
@@ -1526,7 +1427,7 @@ public:
     void run() {
         cout << "\n*** WELCOME TO PASSWORD MANAGER ***\n";
         cout << "Secure Credential Management System\n";
-        
+
         while (isRunning) {
             try {
                 if (!currentUser)
@@ -1536,12 +1437,15 @@ public:
                 else
                     showUserMenu();
             } catch (const exception& e) {
-                cout << "❌ Unexpected error: " << e.what() << endl;
+                cout << "⚠️ Error: " << e.what() << endl;
             }
         }
-        
+
         // Save on exit
-        FileManager::saveUsers(users);
+        try {
+            FileManager::saveUsers(users);
+        } catch (...) {
+        }
     }
 };
 
@@ -1553,9 +1457,9 @@ int main() {
         PasswordManager app;
         app.run();
     } catch (const exception& e) {
-        cerr << "Critical error: " << e.what() << endl;
+        cerr << "Fatal error: " << e.what() << endl;
         return 1;
     }
-    
+
     return 0;
 }
