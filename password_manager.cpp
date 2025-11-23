@@ -1,21 +1,4 @@
-/*
- * Password Manager - C++ Console Application
- * 
- * A secure password management system with multi-user support, encryption,
- * and credential management for websites, desktop applications, and games.
- * 
- * Features:
- * - Multi-user authentication (admin and normal users)
- * - Secure password storage with encryption
- * - Random password generation
- * - Credential CRUD operations with audit trail
- * - Search and sort functionality
- * - Masked password display
- * 
- * Author: Aymen Griri
- * Date: 2025
- */
-
+//Password Manager - C++ Console Application
 #include <iostream>
 #include <string>
 #include <vector>
@@ -340,7 +323,6 @@ public:
     PasswordGenerator() : generator(rd()) {}
 
     // Generates random password with configurable length and character sets
-    // Parameters allow customization of character types (uppercase, lowercase, numbers, special)
     string generate(int length = 16, bool useUpper = true, bool useLower = true,
                     bool useNumbers = true, bool useSpecial = true) {
 
@@ -474,7 +456,7 @@ public:
         cout << "\n" << string(60, '=') << endl;
     }
 
-    // Sorts credentials by last updated date (newest first)
+    // Sorts credentials by last updated date
     void sortByDate() {
         sort(credentials.begin(), credentials.end(),
              [](const Credential &a, const Credential &b) {
@@ -490,7 +472,7 @@ public:
              });
     }
 
-    // Searches credentials by name (case-insensitive partial match)
+    // Searches credentials by name (case-insensitive)
     vector<Credential> searchCredentialsByName(const string& searchTerm) const {
         vector<Credential> results;
         string lowerSearch = Utilities::toLower(searchTerm);
@@ -556,7 +538,6 @@ public:
 class FileManager {
 public:
     // Creates data directory if it doesn't exist
-    // Ensures the data folder exists before attempting file operations
     static void ensureDataDirectory() {
         try {
             if (!fs::exists(Constants::DATA_DIR)) {
@@ -567,7 +548,6 @@ public:
     }
 
     // Loads all users from file and their associated credentials
-    // Returns empty vector if file doesn't exist (first run)
     static vector<User> loadUsers() {
         vector<User> users;
         ensureDataDirectory();
@@ -595,7 +575,6 @@ public:
     }
 
     // Saves all users to file and triggers credential file saves for each user
-    // Overwrites existing file to ensure data consistency
     static void saveUsers(const vector<User>& users) {
         ensureDataDirectory();
         ofstream file(Constants::USERS_FILE, ios::trunc);
@@ -613,7 +592,6 @@ public:
     }
 
     // Loads credentials for a specific user from their individual credential file
-    // Returns empty vector if file doesn't exist
     static vector<Credential> loadCredentials(const string& username) {
         vector<Credential> credentials;
         string filename = Constants::CREDENTIALS_FILE_PREFIX + username + ".dat";
@@ -637,7 +615,6 @@ public:
     }
 
     // Saves credentials for a specific user to their individual credential file
-    // Overwrites existing file to ensure data consistency
     static void saveCredentials(const string& username, const vector<Credential>& credentials) {
         ensureDataDirectory();
         string filename = Constants::CREDENTIALS_FILE_PREFIX + username + ".dat";
@@ -673,7 +650,6 @@ private:
     PasswordGenerator pwdGenerator;
 
     // Creates default admin and normal users if no users exist in the system
-    // This ensures the application has at least one admin account for initial access
     void initializeDefaultUsers() {
         if (users.empty()) {
             users.push_back(User("admin", "admin123", "admin"));
@@ -687,7 +663,6 @@ private:
     }
 
     // Synchronizes current user changes back to users vector
-    // This ensures that any modifications made while logged in are saved to the users list
     void syncCurrentUserToVector() {
         if (!currentUser) return;
         for (auto& user : users) {
@@ -818,7 +793,6 @@ private:
     }
 
     // Handles new user registration with password validation
-    // Admin users can create other users with admin privileges
     void registerUser() {
         string username, password, userType = "normal";
         cout << "\n--- User Registration ---\n";
@@ -1381,7 +1355,6 @@ private:
     }
 
     // Validates and returns integer input within specified range
-    // Handles invalid input gracefully with error messages
     int getValidatedInput(int min, int max) {
         int input;
         string line;
@@ -1412,7 +1385,6 @@ private:
             }
         }
     }
-
 public:
     PasswordManager() {
         try {
